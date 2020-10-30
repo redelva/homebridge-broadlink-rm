@@ -3,6 +3,7 @@ const delayForDuration = require('../helpers/delayForDuration');
 const catchDelayCancelError = require('../helpers/catchDelayCancelError');
 const ping = require('../helpers/ping');
 const BroadlinkRMAccessory = require('./accessory');
+const request = require('request');
 
 class TVAccessory extends BroadlinkRMAccessory {
   constructor(log, config = {}, serviceManagerType) {
@@ -18,7 +19,7 @@ class TVAccessory extends BroadlinkRMAccessory {
 
     config.offDuration = config.offDuration || 60;
     config.onDuration = config.onDuration || 60;
-    
+
     config.subType = config.subType || 'tv';
 
     if (
@@ -44,7 +45,7 @@ class TVAccessory extends BroadlinkRMAccessory {
     super.reset();
 
     this.stateChangeInProgress = true;
-    
+
     // Clear Timeouts
     if (this.delayTimeoutPromise) {
       this.delayTimeoutPromise.cancel();
@@ -60,13 +61,13 @@ class TVAccessory extends BroadlinkRMAccessory {
       this.autoOnTimeoutPromise.cancel();
       this.autoOnTimeoutPromise = null;
     }
-  
+
     if (this.pingGraceTimeout) {
       this.pingGraceTimeout.cancel();
       this.pingGraceTimeout = null;
     }
   }
-  
+
   checkAutoOnOff() {
     this.reset();
     this.checkPingGrace();
@@ -86,9 +87,9 @@ class TVAccessory extends BroadlinkRMAccessory {
 
   pingCallback(active) {
     const { config, state, serviceManager } = this;
-    
-    if (this.stateChangeInProgress){ 
-      return; 
+
+    if (this.stateChangeInProgress){
+      return;
     }
 
     if (config.pingIPAddressStateOnly) {
@@ -102,17 +103,45 @@ class TVAccessory extends BroadlinkRMAccessory {
     serviceManager.setCharacteristic(Characteristic.Active, value);
   }
 
+  async getSamsungTvStatus(host) {
+    const url = `http://${host}:8001/api/v2/`
+
+    try {
+      await request(url);
+      return true
+    }catch (e){
+      return false
+    }
+
+    return false
+  }
+
   async setSwitchState(hexData) {
-    const { data, host, log, name, debug } = this;
+    const { data, host, log, name, debug, config } = this;
+    const { tvHost } = config;
 
     this.stateChangeInProgress = true;
     this.reset();
 
-    if (hexData) await this.performSend(hexData);
+    if(!tvHost){
+      if (hexData) await this.performSend(hexData);
+    }else{
+      if (hexData){
+        const before = await this.getSamsungTvStatus(tvHost)
+
+        // do it first
+        await this.performSend(hexData);
+
+        while(before === await this.getSamsungTvStatus(tvHost)){
+          //repeat until different
+          await this.performSend(hexData);
+        }
+      }
+    }
 
     this.checkAutoOnOff();
   }
-  
+
   async checkPingGrace () {
     await catchDelayCancelError(async () => {
       const { config, log, name, state, serviceManager } = this;
@@ -128,7 +157,7 @@ class TVAccessory extends BroadlinkRMAccessory {
       }
     });
   }
-  
+
   async checkAutoOff() {
     await catchDelayCancelError(async () => {
       const { config, log, name, state, serviceManager } = this;
